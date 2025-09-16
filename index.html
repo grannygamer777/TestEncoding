@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>List → Single-Token Compressor (0-9, 0a..99z style)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#0f1720; color:#e6eef8; padding:24px; }
+    .card { background:#111827; border-radius:12px; padding:18px; box-shadow: 0 6px 18px rgba(2,6,23,0.6); max-width:920px; margin:16px auto; }
+    h1 { margin:0 0 8px 0; font-size:20px; }
+    p { margin:6px 0 14px 0; color:#bcd3ee; }
+    textarea, input[type="text"], input[type="number"] { width:100%; padding:10px 12px; border-radius:8px; border:1px solid #233040; background:#0b1220; color:#e6eef8; box-sizing:border-box; font-family:monospace; }
+    label { font-size:13px; color:#9fb3d4; display:block; margin-bottom:6px; }
+    .row { display:flex; gap:12px; margin-top:10px; }
+    button { background:#1f6feb; color:white; border:none; padding:10px 12px; border-radius:8px; cursor:pointer; }
+    button.secondary { background:#2b3642; }
+    .small { font-size:13px; color:#97b2d4; margin-top:8px; }
+    pre { background:#081323; padding:12px; border-radius:8px; overflow:auto; font-family:monospace; color:#cfe8ff; }
+    .warn { color:#ffd9d2; background:#40100c; padding:8px; border-radius:8px; margin-top:8px; }
+    .flex-between { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>List → Single-Token Compressor (0–400 values)</h1>
+    <p>Enter a list of integers (each between 0 and 400). The page packs them into a single big integer (base 401) and outputs one compact token using the <code>0-9</code> / <code>0a..99z</code>-style alphabet.</p>
+
+    <label for="nums">Input numbers (comma or space separated)</label>
+    <textarea id="nums" rows="3" placeholder="e.g. 0, 5, 9, 10, 11, 35, 36, 400">0, 5, 9, 10, 11, 35, 36, 400</textarea>
+
+    <div class="row">
+      <div style="flex:1">
+        <label for="encodeBtn">Encode</label>
+        <button id="encodeBtn">Encode to single token</button>
+      </div>
+      <div style="flex:1">
+        <label for="copyEncode">Copy token</label>
+        <button id="copyEncode" class="secondary">Copy</button>
+      </div>
+    </div>
+
+    <div style="margin-top:10px">
+      <label for="tokenOut">Token (single string)</label>
+      <input id="tokenOut" type="text" readonly />
+      <div class="small">Example token for the default input will appear here.</div>
+    </div>
+
+    <hr style="margin:18px 0; border-color:#14202b;" />
+
+    <label for="tokenIn">Decode token (paste single token)</label>
+    <input id="tokenIn" type="text" placeholder="paste token here (e.g. 15o...)" />
+
+    <div style="display:flex; gap:12px; margin-top:8px;">
+      <div style="flex:1">
+        <label for="listLen">Original list length (required)</label>
+        <input id="listLen" type="number" min="1" placeholder="e.g. 8" />
+      </div>
+      <div style="flex:1">
+        <label>&nbsp;</label>
+        <button id="decodeBtn">Decode token → list</button>
+      </div>
+    </div>
+
+    <div style="margin-top:12px">
+      <label for="decodedOut">Decoded list</label>
+      <input id="decodedOut" type="text" readonly />
+      <div class="small">Decoded values will appear here. You must supply the original list length to decode correctly.</div>
+    </div>
+
+    <div class="warn" id="warning" style="display:none"></div>
+
+    <hr style="margin:18px 0; border-color:#14202b;" />
+    <div class="small">Notes:</div>
+    <ul class="small">
+      <li>Each input number must be an integer in <strong>0–400</strong>. The packing base is <code>401</code>.</li>
+      <li>The token encodes the entire list as a single string like <code>0</code>, <code>0a</code>, <code>15o</code>, etc. Length is required to decode because the token itself only represents a single large integer.</li>
+      <li>This encoder supports arbitrarily large lists in principle, but tokens will grow in length for very long lists.</li>
+    </ul>
+  </div>
+
+  <script>
+    // --- Encoder/Decoder implementing the 0-9 / 0a.. style ---
+    // encodeDigit(n): for integer n >= 0 -> string token
+    function encodeDigit(n) {
+      if (!Number.isInteger(n) || n < 0) throw "encodeDigit: n must be non-negative integer";
+      if (n < 10) return String(n);
+      var base = Math.floor((n - 10) / 26);
+      var letterIndex = (n - 10) % 26;
+      return String(base) + String.fromCharCode('a'.charCodeAt(0) + letterIndex);
+    }
+
+    // decodeDigit(s): inverse of encodeDigit for a single token -> integer
+    function decodeDigit(s) {
+      if (typeof s !== 'string' || s.length === 0) throw "decodeDigit: invalid input";
+      if (/^[0-9]$/.test(s)) return parseInt(s, 10);
+      // must end with a letter:
+      var last = s[s.length - 1];
+      if (!/^[a-z]$/.test(last)) throw "decodeDigit: token must end with a lowercase letter or be a single digit";
+      var basePart = s.slice(0, -1);
+      if (basePart === "") throw "decodeDigit: missing base number before letter";
+      var base = parseInt(basePart, 10);
+      if (!Number.isFinite(base) || isNaN(base)) throw "decodeDigit: invalid base in token";
+      var letterIndex = last.charCodeAt(0) - 'a'.charCodeAt(0);
+      return 10 + base * 26 + letterIndex;
+    }
+
+    // pack a list of numbers [0..400] into a single integer using base 401
+    function packListToInteger(nums) {
+      var base = 401;
+      var v = 0n; // use BigInt for safety
+      for (var i = 0; i < nums.length; ++i) {
+        var n = nums[i];
+        if (!Number.isInteger(n) || n < 0 || n > 400) throw "Values must be integers between 0 and 400";
+        v = v * BigInt(base) + BigInt(n);
+      }
+      return v;
+    }
+
+    // unpack integer back into list of length L
+    function unpackIntegerToList(bigIntValue, length) {
+      var base = 401n;
+      var arr = [];
+      var v = BigInt(bigIntValue);
+      for (var i = 0; i < length; ++i) {
+        arr.push(Number(v % base));
+        v = v / base;
+      }
+      arr.reverse();
+      return arr;
+    }
+
+    // encode an entire list into a single token string by encoding the packed integer with encodeDigit
+    function encodeList(nums) {
+      var v = packListToInteger(nums); // BigInt
+      // We need to convert BigInt v into a non-negative integer n for encodeDigit.
+      // encodeDigit accepts arbitrary non-negative integers; we implement a BigInt-aware version.
+      return encodeBigIntAsToken(v);
+    }
+
+    // decode: take single token (string) -> BigInt value; then unpack using known length
+    function decodeList(token, length) {
+      var v = decodeTokenToBigInt(token);
+      return unpackIntegerToList(v, length);
+    }
+
+    // encodeBigIntAsToken: convert BigInt into our textual token format
+    // We'll reuse the same encodeDigit concept but extended to BigInt:
+    function encodeBigIntAsToken(bigint) {
+      if (bigint === 0n) return "0";
+      // We will convert bigint into a sequence of base-? "digits" where each "digit" is a value (0..infty)
+      // But earlier plan: simply represent the entire integer as a single encodeDigit-style token:
+      // encodeDigit(n) with n possibly large: produce "<base><letter>" where base = floor((n-10)/26)
+      // That is safe for any large n (base may be many digits).
+      // So compute numeric n as BigInt -> convert to decimal string for base calculation.
+      // We need to compute: if n<10 => single digit. else base = floor((n-10)/26), letterIndex = (n-10)%26
+      var n = bigint;
+      if (n < 10n) return String(Number(n));
+      var nMinus10 = n - 10n;
+      var base = nMinus10 / 26n; // BigInt division
+      var letterIndex = Number(nMinus10 % 26n); // safe small number 0..25
+      return String(base.toString()) + String.fromCharCode('a'.charCodeAt(0) + letterIndex);
+    }
+
+    // decode a token (single string) into BigInt
+    function decodeTokenToBigInt(token) {
+      if (typeof token !== 'string' || token.length === 0) throw "Empty token";
+      if (/^[0-9]$/.test(token)) return BigInt(parseInt(token, 10));
+      // must end with letter
+      var last = token[token.length - 1];
+      if (!/^[a-z]$/.test(last)) throw "Token must end with a lowercase letter or be a single digit";
+      var basePart = token.slice(0, -1);
+      if (basePart === "") throw "Invalid token (no base before letter)";
+      // basePart is decimal digits, possibly large
+      var baseBig = BigInt(basePart);
+      var letterIndex = BigInt(last.charCodeAt(0) - 'a'.charCodeAt(0));
+      return 10n + baseBig * 26n + letterIndex;
+    }
+
+    // ---------- UI wiring ----------
+    function parseInputList(str) {
+      // accept comma, whitespace, or both
+      var toks = str.split(/[\s,]+/).filter(s => s.length > 0);
+      var nums = toks.map(t => {
+        if (!/^-?\d+$/.test(t)) throw "Invalid integer: " + t;
+        return parseInt(t, 10);
+      });
+      return nums;
+    }
+
+    // elements
+    var encodeBtn = document.getElementById('encodeBtn');
+    var decodeBtn = document.getElementById('decodeBtn');
+    var numsArea = document.getElementById('nums');
+    var tokenOut = document.getElementById('tokenOut');
+    var tokenIn = document.getElementById('tokenIn');
+    var listLen = document.getElementById('listLen');
+    var decodedOut = document.getElementById('decodedOut');
+    var copyEncodeBtn = document.getElementById('copyEncode');
+    var warning = document.getElementById('warning');
+
+    function showWarning(msg) {
+      warning.style.display = 'block';
+      warning.textContent = msg;
+    }
+    function hideWarning() {
+      warning.style.display = 'none';
+      warning.textContent = '';
+    }
+
+    encodeBtn.addEventListener('click', function() {
+      hideWarning();
+      try {
+        var nums = parseInputList(numsArea.value);
+        if (nums.length === 0) { showWarning("No numbers provided."); return; }
+        for (var i = 0; i < nums.length; ++i) {
+          if (!Number.isInteger(nums[i]) || nums[i] < 0 || nums[i] > 400) {
+            showWarning("All numbers must be integers between 0 and 400. Problem at index " + i + " value " + nums[i]);
+            return;
+          }
+        }
+        var token = encodeList(nums);
+        tokenOut.value = token;
+        tokenIn.value = token; // auto-paste for convenience
+        listLen.value = nums.length;
+        decodedOut.value = ""; // clear
+      } catch (e) {
+        showWarning(String(e));
+      }
+    });
+
+    decodeBtn.addEventListener('click', function() {
+      hideWarning();
+      try {
+        var token = tokenIn.value.trim();
+        if (token.length === 0) { showWarning("Paste a token to decode."); return; }
+        var L = parseInt(listLen.value, 10);
+        if (!Number.isInteger(L) || L <= 0) { showWarning("Enter a valid original list length (positive integer)."); return; }
+        var arr = decodeList(token, L);
+        decodedOut.value = arr.join(", ");
+      } catch (e) {
+        showWarning(String(e));
+      }
+    });
+
+    copyEncodeBtn.addEventListener('click', function() {
+      var t = tokenOut.value;
+      if (!t) return;
+      navigator.clipboard?.writeText(t).then(function(){}, function(){});
+    });
+
+    // initialize example
+    (function initExample(){
+      try {
+        var defaultNums = parseInputList(numsArea.value);
+        var tok = encodeList(defaultNums);
+        tokenOut.value = tok;
+        tokenIn.value = tok;
+        listLen.value = defaultNums.length;
+      } catch(e){ /* ignore */ }
+    })();
+  </script>
+</body>
+</html>
