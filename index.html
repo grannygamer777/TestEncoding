@@ -5,7 +5,7 @@
   <title>Custom Compression</title>
 </head>
 <body>
-<h3>Custom List Compressor</h3>
+<h3>Custom List Compressor (0a–99z base-2376)</h3>
 <textarea id="input" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
 <button onclick="doEncode()">Encode</button>
 <button onclick="doDecode()">Decode</button>
@@ -13,7 +13,7 @@
 <p><b>Decoded:</b> <span id="decoded"></span></p>
 
 <script>
-// ---- encode a single number (0–2375) to "0a–99z" ----
+// --- build alphabet ---
 function encodeSymbol(num) {
   if (num < 10) return num.toString();
   num -= 10;
@@ -22,7 +22,6 @@ function encodeSymbol(num) {
   return prefix.toString() + letter;
 }
 
-// ---- decode back from "0a–99z" ----
 function decodeSymbol(sym) {
   if (/^\d$/.test(sym)) return parseInt(sym);
   let prefix = parseInt(sym.slice(0, -1));
@@ -30,40 +29,80 @@ function decodeSymbol(sym) {
   return 10 + prefix * 26 + (letter.charCodeAt(0) - 97);
 }
 
-// ---- ENCODE LIST ----
-function encodeList(nums) {
-  // Pack the list into one big integer
+// base size
+const BASE = 2376;
+
+// encode big integer into base-2376 string
+function bigIntToSymbols(value) {
+  if (value === 0n) return "0";
+  let parts = [];
+  while (value > 0n) {
+    let rem = Number(value % BigInt(BASE));
+    parts.push(encodeSymbol(rem));
+    value /= BigInt(BASE);
+  }
+  return parts.reverse().join("");
+}
+
+// decode base-2376 string back to BigInt
+function symbolsToBigInt(str) {
+  let value = 0n;
+  // parse left-to-right, but need to chunk symbols correctly
+  // symbols can be 1 digit ("0"-"9") or digit+letter ("0a"-"99z")
+  let i = 0;
+  while (i < str.length) {
+    if (/^\d$/.test(str[i])) {
+      // single digit symbol
+      value = value * BigInt(BASE) + BigInt(decodeSymbol(str[i]));
+      i++;
+    } else {
+      // must be multi-digit (like "23a")
+      let j = i;
+      while (j < str.length-1 && /\d/.test(str[j])) j++;
+      let sym = str.slice(i, j+1);
+      value = value * BigInt(BASE) + BigInt(decodeSymbol(sym));
+      i = j+1;
+    }
+  }
+  return value;
+}
+
+// pack list into one big integer
+function packList(nums) {
   let value = 0n;
   for (let n of nums) {
-    value = value * 401n + BigInt(n); // base-401 packing
+    value = value * 401n + BigInt(n);
   }
-  // Convert that big integer into a single symbol index
-  // (mod the range 0–2375 for demo purposes)
-  let compressedIndex = Number(value % 2376n);
-  let compressedSym = encodeSymbol(compressedIndex);
-
-  // encode length separately
-  let lengthSym = encodeSymbol(nums.length);
-
-  return compressedSym + "-" + lengthSym;
+  return value;
 }
 
-// ---- DECODE LIST ----
-function decodeList(code, base=401) {
-  let [sym, lenSym] = code.split("-");
-  let length = decodeSymbol(lenSym);
-
-  let index = decodeSymbol(sym);
-
-  // ⚠️ NOTE: because we modded above,
-  // the list cannot be exactly reconstructed from sym alone.
-  // This is a "short tag" system, not full bijective encoding.
-  // You’d need a larger alphabet to perfectly reverse.
-
-  return "(cannot recover exact list from short tag) length=" + length + " index=" + index;
+// unpack list from big integer
+function unpackList(value, length) {
+  let nums = [];
+  for (let i=0; i<length; i++) {
+    nums.push(Number(value % 401n));
+    value /= 401n;
+  }
+  return nums.reverse();
 }
 
-// ---- UI glue ----
+// main encode
+function encodeList(nums) {
+  let value = packList(nums);
+  let code = bigIntToSymbols(value);
+  let lenCode = encodeSymbol(nums.length);
+  return code + "-" + lenCode;
+}
+
+// main decode
+function decodeList(code) {
+  let [codePart, lenPart] = code.split("-");
+  let length = decodeSymbol(lenPart);
+  let value = symbolsToBigInt(codePart);
+  return unpackList(value, length);
+}
+
+// UI
 function doEncode() {
   let nums = document.getElementById("input").value.split(",").map(x => parseInt(x.trim()));
   let code = encodeList(nums);
@@ -72,7 +111,7 @@ function doEncode() {
 function doDecode() {
   let code = document.getElementById("compressed").innerText;
   let decoded = decodeList(code);
-  document.getElementById("decoded").innerText = decoded;
+  document.getElementById("decoded").innerText = decoded.join(", ");
 }
 </script>
 </body>
