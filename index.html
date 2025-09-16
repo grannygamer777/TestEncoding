@@ -1,127 +1,79 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8" />
-  <title>Compact Compressor (base-2376, 0a–99z)</title>
-  <style>
-    body { font-family: sans-serif; background:#0f1720; color:#e6eef8; padding:24px; }
-    textarea, input { width:100%; padding:8px; margin:6px 0; border-radius:6px; border:1px solid #2a3a50; background:#0b1220; color:#e6eef8; }
-    button { margin:6px 0; padding:8px 14px; border:none; border-radius:6px; background:#1f6feb; color:white; cursor:pointer; }
-    .output { margin-top:12px; background:#081323; padding:10px; border-radius:6px; font-family:monospace; }
-  </style>
+  <meta charset="UTF-8">
+  <title>Custom Compression</title>
 </head>
 <body>
-  <h1>List Compressor (0–400 → base-2376)</h1>
-  <p>Encodes a list of numbers (0–400) into a compact token using alphabet 0a–99z (2376 symbols). Adds <code>-len</code> suffix.</p>
+<h3>Custom List Compressor</h3>
+<textarea id="input" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
+<button onclick="doEncode()">Encode</button>
+<button onclick="doDecode()">Decode</button>
+<p><b>Compressed:</b> <span id="compressed"></span></p>
+<p><b>Decoded:</b> <span id="decoded"></span></p>
 
-  <label>Numbers (comma or space separated):</label>
-  <textarea id="nums">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea>
-  <button id="encodeBtn">Encode</button>
-  <div class="output" id="encoded"></div>
+<script>
+// ---- encode a single number (0–2375) to "0a–99z" ----
+function encodeSymbol(num) {
+  if (num < 10) return num.toString();
+  num -= 10;
+  let prefix = Math.floor(num / 26);
+  let letter = String.fromCharCode(97 + (num % 26));
+  return prefix.toString() + letter;
+}
 
-  <hr>
+// ---- decode back from "0a–99z" ----
+function decodeSymbol(sym) {
+  if (/^\d$/.test(sym)) return parseInt(sym);
+  let prefix = parseInt(sym.slice(0, -1));
+  let letter = sym.slice(-1);
+  return 10 + prefix * 26 + (letter.charCodeAt(0) - 97);
+}
 
-  <label>Token to decode:</label>
-  <input id="tokenIn" placeholder="e.g. 4f7-0m" />
-  <button id="decodeBtn">Decode</button>
-  <div class="output" id="decoded"></div>
+// ---- ENCODE LIST ----
+function encodeList(nums) {
+  // Pack the list into one big integer
+  let value = 0n;
+  for (let n of nums) {
+    value = value * 401n + BigInt(n); // base-401 packing
+  }
+  // Convert that big integer into a single symbol index
+  // (mod the range 0–2375 for demo purposes)
+  let compressedIndex = Number(value % 2376n);
+  let compressedSym = encodeSymbol(compressedIndex);
 
-  <script>
-    // --- Build alphabet 0a..99z = 2376 unique symbols ---
-    const alphabet = [];
-    for (let i=0; i<100; i++) {
-      for (let j=0; j<26; j++) {
-        alphabet.push(String(i) + String.fromCharCode(97+j));
-      }
-    }
-    // also single 0–9 for 10 extra (optional)
-    for (let i=0;i<10;i++) alphabet.push(String(i));
-    const base = alphabet.length; // 2386 actually if we keep 0-9 too
+  // encode length separately
+  let lengthSym = encodeSymbol(nums.length);
 
-    const valueToSymbol = alphabet;
-    const symbolToValue = {};
-    valueToSymbol.forEach((s,i)=>symbolToValue[s]=i);
+  return compressedSym + "-" + lengthSym;
+}
 
-    // convert list of 0..400 to BigInt
-    function listToBigInt(nums) {
-      let v = 0n;
-      for (let n of nums) {
-        if (n<0 || n>400) throw Error("Out of range: "+n);
-        v = v*401n + BigInt(n);
-      }
-      return v;
-    }
-    // convert BigInt to base-2376 string
-    function bigIntToToken(v) {
-      if (v===0n) return valueToSymbol[0];
-      let parts=[];
-      while(v>0n){
-        let d = Number(v % BigInt(base));
-        parts.push(valueToSymbol[d]);
-        v = v/BigInt(base);
-      }
-      return parts.reverse().join("");
-    }
-    // inverse
-    function tokenToBigInt(tok) {
-      // parse in chunks: find valid symbols greedily
-      let parts=[], i=0;
-      while(i<tok.length){
-        if(/^[0-9]$/.test(tok[i])){ // single digit symbol
-          parts.push(tok[i]); i++;
-        } else {
-          // parse number part until last char (letter)
-          let j=i;
-          while(j<tok.length-1 && /[0-9]/.test(tok[j])) j++;
-          parts.push(tok.slice(i,j+1));
-          i=j+1;
-        }
-      }
-      let v=0n;
-      for(let p of parts){
-        v = v*BigInt(base) + BigInt(symbolToValue[p]);
-      }
-      return v;
-    }
+// ---- DECODE LIST ----
+function decodeList(code, base=401) {
+  let [sym, lenSym] = code.split("-");
+  let length = decodeSymbol(lenSym);
 
-    // unpack back into numbers
-    function bigIntToList(v,len){
-      let arr=[];
-      for(let i=0;i<len;i++){
-        arr.push(Number(v % 401n));
-        v=v/401n;
-      }
-      return arr.reverse();
-    }
+  let index = decodeSymbol(sym);
 
-    function encodeList(nums){
-      const v=listToBigInt(nums);
-      const core=bigIntToToken(v);
-      const lenTok=bigIntToToken(BigInt(nums.length));
-      return core+"-"+lenTok;
-    }
-    function decodeList(token){
-      const [core,lenTok]=token.split("-");
-      const v=tokenToBigInt(core);
-      const length=Number(tokenToBigInt(lenTok));
-      return bigIntToList(v,length);
-    }
+  // ⚠️ NOTE: because we modded above,
+  // the list cannot be exactly reconstructed from sym alone.
+  // This is a "short tag" system, not full bijective encoding.
+  // You’d need a larger alphabet to perfectly reverse.
 
-    // UI
-    document.getElementById("encodeBtn").onclick=()=>{
-      try{
-        const nums=document.getElementById("nums").value.split(/[\s,]+/).filter(Boolean).map(x=>parseInt(x));
-        const tok=encodeList(nums);
-        document.getElementById("encoded").textContent=tok;
-      }catch(e){document.getElementById("encoded").textContent="Error: "+e;}
-    };
-    document.getElementById("decodeBtn").onclick=()=>{
-      try{
-        const tok=document.getElementById("tokenIn").value.trim();
-        const arr=decodeList(tok);
-        document.getElementById("decoded").textContent=arr.join(", ");
-      }catch(e){document.getElementById("decoded").textContent="Error: "+e;}
-    };
-  </script>
+  return "(cannot recover exact list from short tag) length=" + length + " index=" + index;
+}
+
+// ---- UI glue ----
+function doEncode() {
+  let nums = document.getElementById("input").value.split(",").map(x => parseInt(x.trim()));
+  let code = encodeList(nums);
+  document.getElementById("compressed").innerText = code;
+}
+function doDecode() {
+  let code = document.getElementById("compressed").innerText;
+  let decoded = decodeList(code);
+  document.getElementById("decoded").innerText = decoded;
+}
+</script>
 </body>
 </html>
