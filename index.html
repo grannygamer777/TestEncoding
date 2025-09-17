@@ -2,114 +2,133 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Emoji-Enhanced Compression</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; }
-    textarea { width: 100%; height: 80px; }
-    .output { border: 1px solid #ccc; padding: 10px; margin-top: 10px; white-space: pre-wrap; }
-  </style>
+  <title>Ultra Short Delta Compressor</title>
 </head>
 <body>
-<h2>Emoji-Enhanced Compression System</h2>
+<h2>Ultra Short Delta Compressor</h2>
 
-<p>Enter numbers (comma separated):</p>
-<textarea id="input">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea>
-<br>
+<!-- Encode Box -->
+<h3>Encode Numbers</h3>
+<textarea id="inputNums" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
 <button onclick="doEncode()">Encode</button>
-<button onclick="doDecode()">Decode</button>
+<button onclick="copyCompressed()">Copy Compressed</button>
+<p><b>Compressed:</b></p>
+<textarea id="compressed" rows="2" cols="60" readonly></textarea>
 
-<h3>Compressed:</h3>
-<div id="compressed" class="output"></div>
-<h3>Decoded:</h3>
-<div id="decoded" class="output"></div>
+<hr>
+
+<!-- Decode Box -->
+<h3>Decode Compressed String</h3>
+<textarea id="inputCompressed" rows="2" cols="60"></textarea><br>
+<button onclick="doDecode()">Decode</button>
+<button onclick="copyDecoded()">Copy Decoded</button>
+<p><b>Decoded Numbers:</b></p>
+<textarea id="decoded" rows="3" cols="60" readonly></textarea>
 
 <script>
-// Base symbols (old system)
-const BASE_SYMBOLS = "!@#$%^&*()_+[]{}|;:,.<>?/`~-=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+// --- Alphabet and base ---
+const ALPHABET = "!@#$%^&*()_+?><:|~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const BASE = BigInt(ALPHABET.length);
 
-// Add a block of emojis for repeats
-const EMOJIS = [..."😀😃😄😁😆😅🤣😂🙂🙃😉😊😇🥰😍🤩😘😗☺️😚😙🥲😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶🙄😏😒😞😔😟😕🙁☹️😣😖😫😩🥺😢😭😤😠😡🤬🤯😳🥵🥶😱😨😰😥😓"];
-
-// Final alphabet = symbols + emojis
-const ALPHABET = BASE_SYMBOLS + EMOJIS.join("");
-const BASE = ALPHABET.length;
-
-// Encode number -> base-N string
-function numToToken(n) {
-  if (n === 0) return ALPHABET[0];
+// --- BigInt <-> String ---
+function bigIntToString(n) {
+  if (n === 0n) return ALPHABET[0];
   let out = "";
-  while (n > 0) {
-    out = ALPHABET[n % BASE] + out;
-    n = Math.floor(n / BASE);
+  while (n > 0n) {
+    let rem = Number(n % BASE);
+    out = ALPHABET[rem] + out;
+    n = n / BASE;
   }
   return out;
 }
 
-// Decode base-N string -> number
-function tokenToNum(str) {
-  let n = 0;
+function stringToBigInt(str) {
+  let n = 0n;
   for (let ch of str) {
     let idx = ALPHABET.indexOf(ch);
     if (idx < 0) throw new Error("Invalid character: " + ch);
-    n = n * BASE + idx;
+    n = n * BASE + BigInt(idx);
   }
   return n;
 }
 
-// Auto compression: if a number repeats 3+ times in sequence, replace it with an emoji token directly
+// --- Encode ---
 function encodeList(nums) {
-  let out = [];
-  for (let i = 0; i < nums.length; ) {
-    let current = nums[i];
-    let count = 1;
-    while (i + count < nums.length && nums[i + count] === current) {
-      count++;
-    }
-    if (count >= 3 && count <= EMOJIS.length) {
-      // map directly to emoji index
-      out.push(EMOJIS[count - 1]); // repeat length encoded as emoji
-      out.push(numToToken(current)); // number encoded normally
-    } else {
-      for (let j = 0; j < count; j++) {
-        out.push(numToToken(current));
-      }
-    }
-    i += count;
+  if (nums.length === 0) return "";
+
+  // deltas
+  let deltas = [nums[0]];
+  for (let i = 1; i < nums.length; i++) {
+    deltas.push(nums[i] - nums[i - 1]);
   }
-  return out.join(" ");
+
+  // shift +400 to keep >=0
+  let shifted = deltas.map(d => d + 400);
+
+  // pack into BigInt (base-801)
+  let value = 0n;
+  for (let s of shifted) {
+    value = value * 801n + BigInt(s);
+  }
+
+  let compressed = bigIntToString(value);
+  let lenPart = bigIntToString(BigInt(nums.length));
+  return compressed + "-" + lenPart;
 }
 
-function decodeList(str) {
-  let parts = str.split(/\s+/).filter(x=>x.length>0);
-  let out = [];
-  for (let i = 0; i < parts.length; i++) {
-    let token = parts[i];
-    let emojiIndex = EMOJIS.indexOf(token);
-    if (emojiIndex >= 0) {
-      // emoji = repeat count
-      let count = emojiIndex + 1;
-      let num = tokenToNum(parts[++i]); // next token is the value
-      for (let j = 0; j < count; j++) {
-        out.push(num);
-      }
-    } else {
-      out.push(tokenToNum(token));
+// --- Decode ---
+function decodeList(code) {
+  if (!code.includes("-")) return [];
+  let [comp, lenPart] = code.split("-");
+  let length = Number(stringToBigInt(lenPart));
+
+  let value = stringToBigInt(comp);
+  let shifted = [];
+  for (let i = 0; i < length; i++) {
+    shifted.unshift(Number(value % 801n));
+    value = value / 801n;
+  }
+  let deltas = shifted.map(s => s - 400);
+
+  // rebuild
+  let nums = [];
+  if (deltas.length > 0) {
+    nums.push(deltas[0]);
+    for (let i = 1; i < deltas.length; i++) {
+      nums.push(nums[nums.length - 1] + deltas[i]);
     }
   }
-  return out;
+  return nums;
 }
 
-// UI
+// --- UI Functions ---
 function doEncode() {
-  let nums = document.getElementById("input").value.split(",").map(x=>parseInt(x.trim())).filter(x=>!isNaN(x));
-  let code = encodeList(nums);
-  document.getElementById("compressed").innerText = code;
+  let input = document.getElementById("inputNums").value.split(",").map(x => parseInt(x.trim()));
+  let code = encodeList(input);
+  document.getElementById("compressed").value = code;
+  document.getElementById("inputCompressed").value = code; // auto-fill decode box
 }
 
 function doDecode() {
-  let code = document.getElementById("compressed").innerText;
-  let decoded = decodeList(code);
-  document.getElementById("decoded").innerText = decoded.join(",");
+  let code = document.getElementById("inputCompressed").value.trim();
+  if (!code) return alert("Paste compressed string first!");
+  let nums = decodeList(code);
+  document.getElementById("decoded").value = nums.join(",");
+}
+
+// --- Copy Buttons ---
+function copyCompressed() {
+  let box = document.getElementById("compressed");
+  box.select();
+  document.execCommand("copy");
+  alert("Compressed string copied!");
+}
+
+function copyDecoded() {
+  let box = document.getElementById("decoded");
+  box.select();
+  document.execCommand("copy");
+  alert("Decoded numbers copied!");
 }
 </script>
 </body>
