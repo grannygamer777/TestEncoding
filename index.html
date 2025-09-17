@@ -2,78 +2,67 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Ultra Delta Compression</title>
+  <title>Ultra Short Delta Compressor</title>
 </head>
 <body>
-<h3>Ultra Delta Compressor (0–400 values)</h3>
-<textarea id="input" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
+<h2>Ultra Short Delta Compressor</h2>
+
+<!-- Encode Box -->
+<h3>Encode Numbers</h3>
+<textarea id="inputNums" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
 <button onclick="doEncode()">Encode</button>
+<button onclick="copyCompressed()">Copy Compressed</button>
+<p><b>Compressed:</b></p>
+<textarea id="compressed" rows="2" cols="60" readonly></textarea>
+
+<hr>
+
+<!-- Decode Box -->
+<h3>Decode Compressed String</h3>
+<textarea id="inputCompressed" rows="2" cols="60"></textarea><br>
 <button onclick="doDecode()">Decode</button>
-<p><b>Compressed:</b> <span id="compressed"></span></p>
-<p><b>Decoded:</b> <span id="decoded"></span></p>
+<button onclick="copyDecoded()">Copy Decoded</button>
+<p><b>Decoded Numbers:</b></p>
+<textarea id="decoded" rows="3" cols="60" readonly></textarea>
 
 <script>
-// --- Encode single number (0–2375) as "0a–99z" ---
-function encodeSymbol(num) {
-  if (num < 10) return num.toString();
-  num -= 10;
-  let prefix = Math.floor(num / 26);
-  let letter = String.fromCharCode(97 + (num % 26));
-  return prefix.toString() + letter;
-}
-function decodeSymbol(sym) {
-  if (/^\d$/.test(sym)) return parseInt(sym);
-  let prefix = parseInt(sym.slice(0, -1));
-  let letter = sym.slice(-1);
-  return 10 + prefix * 26 + (letter.charCodeAt(0) - 97);
+// --- Alphabet and base ---
+const ALPHABET = "!@#$%^&*()_+?><:|~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const BASE = BigInt(ALPHABET.length);
+
+// --- BigInt <-> String ---
+function bigIntToString(n) {
+  if (n === 0n) return ALPHABET[0];
+  let out = "";
+  while (n > 0n) {
+    let rem = Number(n % BASE);
+    out = ALPHABET[rem] + out;
+    n = n / BASE;
+  }
+  return out;
 }
 
-// --- BigInt <-> symbol string (base-2376) ---
-function bigIntToSymbols(n) {
-  let base = 2376n;
-  if (n === 0n) return "0";
-  let parts = [];
-  while (n > 0n) {
-    let rem = Number(n % base);
-    parts.push(encodeSymbol(rem));
-    n = n / base;
-  }
-  return parts.reverse().join("");
-}
-function symbolsToBigInt(str) {
-  let base = 2376n;
-  let symbols = [];
-  // greedy parse
-  let i = 0;
-  while (i < str.length) {
-    if (/^\d$/.test(str[i])) {
-      symbols.push(str[i]);
-      i++;
-    } else {
-      let j = i;
-      while (j < str.length && /[0-9]/.test(str[j])) j++;
-      symbols.push(str.slice(i, j + 1));
-      i = j + 1;
-    }
-  }
+function stringToBigInt(str) {
   let n = 0n;
-  for (let sym of symbols) {
-    n = n * base + BigInt(decodeSymbol(sym));
+  for (let ch of str) {
+    let idx = ALPHABET.indexOf(ch);
+    if (idx < 0) throw new Error("Invalid character: " + ch);
+    n = n * BASE + BigInt(idx);
   }
   return n;
 }
 
-// --- ENCODE LIST ---
+// --- Encode ---
 function encodeList(nums) {
   if (nums.length === 0) return "";
 
-  // delta compress
+  // deltas
   let deltas = [nums[0]];
   for (let i = 1; i < nums.length; i++) {
     deltas.push(nums[i] - nums[i - 1]);
   }
 
-  // shift into positive range 0–800
+  // shift +400 to keep >=0
   let shifted = deltas.map(d => d + 400);
 
   // pack into BigInt (base-801)
@@ -82,33 +71,26 @@ function encodeList(nums) {
     value = value * 801n + BigInt(s);
   }
 
-  // encode as base-2376 string
-  let compressed = bigIntToSymbols(value);
-
-  // append length
-  let lenSym = encodeSymbol(nums.length);
-  return compressed + "-" + lenSym;
+  let compressed = bigIntToString(value);
+  let lenPart = bigIntToString(BigInt(nums.length));
+  return compressed + "-" + lenPart;
 }
 
-// --- DECODE LIST ---
+// --- Decode ---
 function decodeList(code) {
   if (!code.includes("-")) return [];
-  let [symStr, lenSym] = code.split("-");
-  let length = decodeSymbol(lenSym);
+  let [comp, lenPart] = code.split("-");
+  let length = Number(stringToBigInt(lenPart));
 
-  // unpack bigInt
-  let value = symbolsToBigInt(symStr);
-
-  // extract shifted deltas
+  let value = stringToBigInt(comp);
   let shifted = [];
   for (let i = 0; i < length; i++) {
     shifted.unshift(Number(value % 801n));
     value = value / 801n;
   }
-
   let deltas = shifted.map(s => s - 400);
 
-  // rebuild numbers
+  // rebuild
   let nums = [];
   if (deltas.length > 0) {
     nums.push(deltas[0]);
@@ -119,16 +101,34 @@ function decodeList(code) {
   return nums;
 }
 
-// --- UI glue ---
+// --- UI Functions ---
 function doEncode() {
-  let nums = document.getElementById("input").value.split(",").map(x => parseInt(x.trim()));
-  let code = encodeList(nums);
-  document.getElementById("compressed").innerText = code;
+  let input = document.getElementById("inputNums").value.split(",").map(x => parseInt(x.trim()));
+  let code = encodeList(input);
+  document.getElementById("compressed").value = code;
+  document.getElementById("inputCompressed").value = code; // auto-fill decode box
 }
+
 function doDecode() {
-  let code = document.getElementById("compressed").innerText;
-  let decoded = decodeList(code);
-  document.getElementById("decoded").innerText = decoded.join(",");
+  let code = document.getElementById("inputCompressed").value.trim();
+  if (!code) return alert("Paste compressed string first!");
+  let nums = decodeList(code);
+  document.getElementById("decoded").value = nums.join(",");
+}
+
+// --- Copy Buttons ---
+function copyCompressed() {
+  let box = document.getElementById("compressed");
+  box.select();
+  document.execCommand("copy");
+  alert("Compressed string copied!");
+}
+
+function copyDecoded() {
+  let box = document.getElementById("decoded");
+  box.select();
+  document.execCommand("copy");
+  alert("Decoded numbers copied!");
 }
 </script>
 </body>
