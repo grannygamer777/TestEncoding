@@ -2,133 +2,91 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Ultra Short Delta Compressor</title>
+  <title>Emoji Compression Test</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    textarea { width: 100%; height: 80px; }
+    .output { border: 1px solid #ccc; padding: 10px; margin-top: 10px; white-space: pre-wrap; }
+  </style>
 </head>
 <body>
-<h2>Ultra Short Delta Compressor</h2>
+<h2>Emoji Dictionary Compressor</h2>
 
-<!-- Encode Box -->
-<h3>Encode Numbers</h3>
-<textarea id="inputNums" rows="3" cols="60">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea><br>
+<p>Enter numbers (comma separated):</p>
+<textarea id="input">0,0,400,400,300,300,200,200,100,100,321,124,222</textarea>
+<br>
 <button onclick="doEncode()">Encode</button>
-<button onclick="copyCompressed()">Copy Compressed</button>
-<p><b>Compressed:</b></p>
-<textarea id="compressed" rows="2" cols="60" readonly></textarea>
-
-<hr>
-
-<!-- Decode Box -->
-<h3>Decode Compressed String</h3>
-<textarea id="inputCompressed" rows="2" cols="60"></textarea><br>
 <button onclick="doDecode()">Decode</button>
-<button onclick="copyDecoded()">Copy Decoded</button>
-<p><b>Decoded Numbers:</b></p>
-<textarea id="decoded" rows="3" cols="60" readonly></textarea>
+
+<h3>Compressed:</h3>
+<div id="compressed" class="output"></div>
+<h3>Decoded:</h3>
+<div id="decoded" class="output"></div>
 
 <script>
-// --- Alphabet and base ---
-const ALPHABET = "!@#$%^&*()_+?><:|~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const BASE = BigInt(ALPHABET.length);
+const EMOJIS = [..."😀😃😄😁😆😅🤣😂🙂🙃😉😊😇🥰😍🤩😘😗☺️😚😙🥲😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😶‍🌫️🙄😏😒😞😔😟😕🙁☹️😣😖😫😩🥺😢😭😤😠😡🤬🤯😳🥵🥶😱😨😰😥😓🤗🫡🫢🫣🫠"]; 
+// can extend with full set if needed
 
-// --- BigInt <-> String ---
-function bigIntToString(n) {
-  if (n === 0n) return ALPHABET[0];
-  let out = "";
-  while (n > 0n) {
-    let rem = Number(n % BASE);
-    out = ALPHABET[rem] + out;
-    n = n / BASE;
-  }
-  return out;
-}
-
-function stringToBigInt(str) {
-  let n = 0n;
-  for (let ch of str) {
-    let idx = ALPHABET.indexOf(ch);
-    if (idx < 0) throw new Error("Invalid character: " + ch);
-    n = n * BASE + BigInt(idx);
-  }
-  return n;
-}
-
-// --- Encode ---
 function encodeList(nums) {
-  if (nums.length === 0) return "";
+  // count frequency
+  let freq = {};
+  nums.forEach(n => freq[n] = (freq[n] || 0) + 1);
 
-  // deltas
-  let deltas = [nums[0]];
-  for (let i = 1; i < nums.length; i++) {
-    deltas.push(nums[i] - nums[i - 1]);
+  // choose most frequent (>=3 occurrences)
+  let frequent = Object.entries(freq).filter(([n,c]) => c >= 3);
+  frequent.sort((a,b) => b[1] - a[1]);
+
+  let dict = {};
+  for (let i=0; i<frequent.length && i<EMOJIS.length; i++) {
+    dict[frequent[i][0]] = EMOJIS[i];
   }
 
-  // shift +400 to keep >=0
-  let shifted = deltas.map(d => d + 400);
+  // build dictionary string
+  let dictStr = Object.entries(dict).map(([num,emoji]) => emoji + "=" + num).join(",") + ";";
 
-  // pack into BigInt (base-801)
-  let value = 0n;
-  for (let s of shifted) {
-    value = value * 801n + BigInt(s);
-  }
+  // replace numbers with emoji if possible
+  let out = nums.map(n => dict[n] || n).join("");
 
-  let compressed = bigIntToString(value);
-  let lenPart = bigIntToString(BigInt(nums.length));
-  return compressed + "-" + lenPart;
+  return dictStr + out;
 }
 
-// --- Decode ---
-function decodeList(code) {
-  if (!code.includes("-")) return [];
-  let [comp, lenPart] = code.split("-");
-  let length = Number(stringToBigInt(lenPart));
+function decodeList(str) {
+  if (!str.includes(";")) return [];
 
-  let value = stringToBigInt(comp);
-  let shifted = [];
-  for (let i = 0; i < length; i++) {
-    shifted.unshift(Number(value % 801n));
-    value = value / 801n;
-  }
-  let deltas = shifted.map(s => s - 400);
+  let [dictPart, body] = str.split(";",2);
 
-  // rebuild
-  let nums = [];
-  if (deltas.length > 0) {
-    nums.push(deltas[0]);
-    for (let i = 1; i < deltas.length; i++) {
-      nums.push(nums[nums.length - 1] + deltas[i]);
-    }
+  // parse dictionary
+  let dict = {};
+  if (dictPart.trim() !== "") {
+    dictPart.split(",").forEach(entry => {
+      if (entry.includes("=")) {
+        let [emoji, num] = entry.split("=");
+        dict[emoji] = num;
+      }
+    });
   }
+
+  // decode body: replace emojis with their numbers
+  let decoded = "";
+  for (let ch of body) {
+    decoded += dict[ch] !== undefined ? dict[ch] + "," : ch;
+  }
+
+  // handle plain numbers left
+  let nums = decoded.split(/,|\s+/).filter(x => x.length>0).map(Number);
   return nums;
 }
 
-// --- UI Functions ---
 function doEncode() {
-  let input = document.getElementById("inputNums").value.split(",").map(x => parseInt(x.trim()));
-  let code = encodeList(input);
-  document.getElementById("compressed").value = code;
-  document.getElementById("inputCompressed").value = code; // auto-fill decode box
+  let nums = document.getElementById("input").value.split(",").map(x => parseInt(x.trim())).filter(x=>!isNaN(x));
+  let code = encodeList(nums);
+  document.getElementById("compressed").innerText = code;
 }
 
 function doDecode() {
-  let code = document.getElementById("inputCompressed").value.trim();
-  if (!code) return alert("Paste compressed string first!");
-  let nums = decodeList(code);
-  document.getElementById("decoded").value = nums.join(",");
-}
-
-// --- Copy Buttons ---
-function copyCompressed() {
-  let box = document.getElementById("compressed");
-  box.select();
-  document.execCommand("copy");
-  alert("Compressed string copied!");
-}
-
-function copyDecoded() {
-  let box = document.getElementById("decoded");
-  box.select();
-  document.execCommand("copy");
-  alert("Decoded numbers copied!");
+  let code = document.getElementById("compressed").innerText;
+  let decoded = decodeList(code);
+  document.getElementById("decoded").innerText = decoded.join(",");
 }
 </script>
 </body>
